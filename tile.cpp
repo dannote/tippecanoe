@@ -30,6 +30,7 @@
 #include <zlib.h>
 #include <sys/wait.h>
 #include "mvt.hpp"
+#include "mlt.hpp"
 #include "mbtiles.hpp"
 #include "dirtiles.hpp"
 #include "geometry.hpp"
@@ -2728,7 +2729,13 @@ long long write_tile(decompressor *geoms, std::atomic<long long> *geompos_in, ch
 			}
 
 			std::string compressed;
-			std::string pbf = tile.encode();
+			std::string pbf;
+			if (output_format == OUTPUT_MLT) {
+				mlt::mlt_tile mlt_encoder;
+				pbf = mlt_encoder.encode(tile);
+			} else {
+				pbf = tile.encode();
+			}
 
 			tile.layers.clear();
 

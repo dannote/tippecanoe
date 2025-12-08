@@ -59,7 +59,7 @@ C = $(wildcard *.c) $(wildcard *.cpp)
 INCLUDES = -I/usr/local/include -I. -Iclipper2/include
 LIBS = -L/usr/local/lib
 
-tippecanoe: geojson.o jsonpull/jsonpull.o tile.o pool.o mbtiles.o geometry.o projection.o memfile.o mvt.o serial.o main.o platform.o text.o dirtiles.o pmtiles_file.o plugin.o read_json.o write_json.o geobuf.o flatgeobuf.o evaluator.o geocsv.o csv.o geojson-loop.o json_logger.o visvalingam.o compression.o clip.o sort.o attribute.o thread.o shared_borders.o clipper2/src/clipper.engine.o
+tippecanoe: geojson.o jsonpull/jsonpull.o tile.o pool.o mbtiles.o geometry.o projection.o memfile.o mvt.o mlt.o serial.o main.o platform.o text.o dirtiles.o pmtiles_file.o plugin.o read_json.o write_json.o geobuf.o flatgeobuf.o evaluator.o geocsv.o csv.o geojson-loop.o json_logger.o visvalingam.o compression.o clip.o sort.o attribute.o thread.o shared_borders.o clipper2/src/clipper.engine.o
 	$(CXX) $(PG) $(LIBS) $(FINAL_FLAGS) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) -lm -lz -lsqlite3 -lpthread
 
 tippecanoe-enumerate: enumerate.o
@@ -74,7 +74,7 @@ tile-join: tile-join.o platform.o projection.o mbtiles.o mvt.o memfile.o dirtile
 tippecanoe-json-tool: jsontool.o jsonpull/jsonpull.o csv.o text.o geojson-loop.o
 	$(CXX) $(PG) $(LIBS) $(FINAL_FLAGS) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) -lm -lz -lsqlite3 -lpthread
 
-unit: unit.o text.o sort.o mvt.o projection.o clip.o attribute.o jsonpull/jsonpull.o evaluator.o read_json.o clipper2/src/clipper.engine.o
+unit: unit.o text.o sort.o mvt.o mlt.o projection.o clip.o attribute.o jsonpull/jsonpull.o evaluator.o read_json.o clipper2/src/clipper.engine.o
 	$(CXX) $(PG) $(LIBS) $(FINAL_FLAGS) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) -lm -lz -lsqlite3 -lpthread
 
 tippecanoe-overzoom: overzoom.o mvt.o clip.o evaluator.o jsonpull/jsonpull.o text.o attribute.o read_json.o projection.o read_json.o clipper2/src/clipper.engine.o
@@ -97,7 +97,7 @@ indent:
 TESTS = $(wildcard tests/*/out/*.json)
 SPACE = $(NULL) $(NULL)
 
-test: tippecanoe tippecanoe-decode $(addsuffix .check,$(TESTS)) raw-tiles-test parallel-test pbf-test join-test enumerate-test decode-test join-filter-test unit json-tool-test allow-existing-test csv-test layer-json-test pmtiles-test decode-pmtiles-test overzoom-test
+test: tippecanoe tippecanoe-decode $(addsuffix .check,$(TESTS)) raw-tiles-test parallel-test pbf-test join-test enumerate-test decode-test join-filter-test unit json-tool-test allow-existing-test csv-test layer-json-test pmtiles-test decode-pmtiles-test overzoom-test mlt-test
 	./unit
 
 suffixes = json json.gz
@@ -224,6 +224,25 @@ pmtiles-test: tippecanoe tippecanoe-decode tile-join
 	./tippecanoe-decode -x generator tests/raw-tiles/nothing.pmtiles | sed 's/\.pmtiles//g' | sed 's/ -o / -e /g' > tests/raw-tiles/nothing.json.check
 	cmp tests/raw-tiles/nothing.json.check tests/raw-tiles/nothing.json
 	rm -r tests/raw-tiles/nothing.pmtiles tests/raw-tiles/nothing.json.check
+
+mlt-test: tippecanoe
+	# Test MLT tile generation with points
+	./tippecanoe -q --output-format=mlt -z5 -f -o tests/mlt/points.mbtiles tests/mlt/points.geojson
+	@# Verify tiles exist and have reasonable size (MLT tiles should be non-empty)
+	@test $$(sqlite3 tests/mlt/points.mbtiles "SELECT COUNT(*) FROM tiles") -gt 0 || (echo "ERROR: No MLT tiles generated" && exit 1)
+	@echo "MLT point tiles generated successfully"
+	# Test that MVT still works (no regression)
+	./tippecanoe -q --output-format=mvt -z5 -f -o tests/mlt/points-mvt.mbtiles tests/mlt/points.geojson
+	@test $$(sqlite3 tests/mlt/points-mvt.mbtiles "SELECT COUNT(*) FROM tiles") -gt 0 || (echo "ERROR: No MVT tiles generated" && exit 1)
+	@echo "MVT tiles still work correctly"
+	# Compare tile counts (should be same number of tiles)
+	@test $$(sqlite3 tests/mlt/points.mbtiles "SELECT COUNT(*) FROM tiles") -eq $$(sqlite3 tests/mlt/points-mvt.mbtiles "SELECT COUNT(*) FROM tiles") || (echo "ERROR: MLT and MVT tile counts differ" && exit 1)
+	@echo "MLT and MVT generate same number of tiles"
+	# Test MLT tile structure - first few bytes should contain layer metadata
+	@sqlite3 tests/mlt/points.mbtiles "SELECT hex(tile_data) FROM tiles LIMIT 1" | head -c 4 | grep -q "1F8B" && echo "MLT tiles are gzip compressed" || (echo "ERROR: MLT tiles not gzip compressed" && exit 1)
+	# Cleanup
+	rm -f tests/mlt/points.mbtiles tests/mlt/points-mvt.mbtiles
+	@echo "All MLT tests passed!"
 
 decode-test: tippecanoe tippecanoe-decode
 	mkdir -p tests/muni/decode

@@ -66,6 +66,11 @@ struct order_field {
 
 extern std::vector<order_field> order_by;
 
+// Output format: 0 = MVT (default), 1 = MLT
+extern int output_format;
+#define OUTPUT_MVT 0
+#define OUTPUT_MLT 1
+
 // not legal UTF-8, so can't appear as a real attribute name
 #define ORDER_BY_SIZE "\200size"
 extern bool order_by_size;

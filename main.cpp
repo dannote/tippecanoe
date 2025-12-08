@@ -102,6 +102,7 @@ size_t maximum_string_attribute_length = 0;
 std::vector<order_field> order_by;
 bool order_reverse;
 bool order_by_size = false;
+int output_format = OUTPUT_MVT;
 
 int prevent[256];
 int additional[256];
@@ -3156,6 +3157,7 @@ int main(int argc, char **argv) {
 		{"no-feature-limit", no_argument, &prevent[P_FEATURE_LIMIT], 1},
 		{"no-tile-size-limit", no_argument, &prevent[P_KILOBYTE_LIMIT], 1},
 		{"no-tile-compression", no_argument, &prevent[P_TILE_COMPRESSION], 1},
+		{"output-format", required_argument, 0, '~'},
 		{"no-tile-stats", no_argument, &prevent[P_TILE_STATS], 1},
 		{"tile-stats-attributes-limit", required_argument, 0, '~'},
 		{"tile-stats-sample-values-limit", required_argument, 0, '~'},
@@ -3307,6 +3309,15 @@ int main(int argc, char **argv) {
 				unidecode_data = read_unidecode(optarg);
 			} else if (strcmp(opt, "maximum-string-attribute-length") == 0) {
 				maximum_string_attribute_length = atoll_require(optarg, "Maximum string attribute length");
+			} else if (strcmp(opt, "output-format") == 0) {
+				if (strcmp(optarg, "mvt") == 0 || strcmp(optarg, "pbf") == 0) {
+					output_format = OUTPUT_MVT;
+				} else if (strcmp(optarg, "mlt") == 0) {
+					output_format = OUTPUT_MLT;
+				} else {
+					fprintf(stderr, "%s: --output-format must be 'mvt' or 'mlt'\n", argv[0]);
+					exit(EXIT_ARGS);
+				}
 			} else {
 				fprintf(stderr, "%s: Unrecognized option --%s\n", argv[0], opt);
 				exit(EXIT_ARGS);
