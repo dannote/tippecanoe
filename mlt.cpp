@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include "mlt.hpp"
 #include "protozero/varint.hpp"
+#include "jsonpull/jsonpull.h"
 
 namespace mlt {
 
@@ -531,12 +532,183 @@ std::vector<PropertyColumnInfo> mlt_tile::analyze_properties(const mvt_layer &la
 	return result;
 }
 
+// Check if a string looks like a JSON object (starts with '{')
+bool mlt_tile::is_json_object_string(const std::string &s) {
+	if (s.empty()) return false;
+	size_t start = 0;
+	// Skip leading whitespace
+	while (start < s.size() && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r')) {
+		start++;
+	}
+	return start < s.size() && s[start] == '{';
+}
+
+// Parse JSON object string and extract child field values (only string values supported)
+std::map<std::string, std::string> mlt_tile::parse_json_object(const std::string &json_str) {
+	std::map<std::string, std::string> result;
+	
+	json_pull *jp = json_begin_string(json_str.c_str());
+	if (jp == NULL) {
+		return result;
+	}
+	
+	json_object *obj = json_read_tree(jp);
+	if (obj != NULL && obj->type == JSON_HASH) {
+		for (size_t i = 0; i < obj->value.object.length; i++) {
+			json_object *key = obj->value.object.keys[i];
+			json_object *val = obj->value.object.values[i];
+			
+			if (key->type == JSON_STRING && val != NULL) {
+				std::string key_str = key->value.string.string;
+				std::string val_str;
+				
+				// Convert value to string
+				if (val->type == JSON_STRING) {
+					val_str = val->value.string.string;
+				} else if (val->type == JSON_NUMBER) {
+					if (val->value.number.large_unsigned != 0) {
+						val_str = std::to_string(val->value.number.large_unsigned);
+					} else if (val->value.number.large_signed != 0) {
+						val_str = std::to_string(val->value.number.large_signed);
+					} else {
+						val_str = std::to_string(val->value.number.number);
+					}
+				} else if (val->type == JSON_TRUE) {
+					val_str = "true";
+				} else if (val->type == JSON_FALSE) {
+					val_str = "false";
+				} else if (val->type == JSON_NULL) {
+					// Skip null values
+					continue;
+				} else {
+					// For nested objects/arrays, stringify them
+					char *s = json_stringify(val);
+					val_str = s;
+					free(s);
+				}
+				
+				result[key_str] = val_str;
+			}
+		}
+		json_free(obj);
+	}
+	
+	json_end(jp);
+	return result;
+}
+
+// Analyze and extract STRUCT columns from JSON object strings
+// This modifies property_columns to remove columns that become struct columns
+std::vector<StructColumnInfo> mlt_tile::analyze_struct_properties(const mvt_layer &layer,
+								   std::vector<PropertyColumnInfo> &scalar_columns) {
+	std::vector<StructColumnInfo> struct_columns;
+	std::vector<size_t> columns_to_remove;
+	
+	size_t num_features = layer.features.size();
+	
+	for (size_t col_idx = 0; col_idx < scalar_columns.size(); col_idx++) {
+		const PropertyColumnInfo &col = scalar_columns[col_idx];
+		
+		// Only consider string columns that might be JSON objects
+		if (col.mvt_type != mvt_string) {
+			continue;
+		}
+		
+		// Check if all non-null values are JSON objects with consistent structure
+		std::set<std::string> all_child_keys;
+		bool is_struct = true;
+		bool found_any = false;
+		
+		for (size_t fi = 0; fi < num_features && is_struct; fi++) {
+			const mvt_value *v = get_feature_property(layer, layer.features[fi], col.name);
+			if (v == NULL || v->type != mvt_string) {
+				continue;
+			}
+			
+			std::string str_val = v->get_string_value();
+			if (str_val.empty()) {
+				continue;
+			}
+			
+			if (!is_json_object_string(str_val)) {
+				is_struct = false;
+				break;
+			}
+			
+			auto parsed = parse_json_object(str_val);
+			if (parsed.empty() && !str_val.empty()) {
+				// Failed to parse or empty object
+				is_struct = false;
+				break;
+			}
+			
+			found_any = true;
+			for (const auto &kv : parsed) {
+				all_child_keys.insert(kv.first);
+			}
+		}
+		
+		if (!is_struct || !found_any || all_child_keys.empty()) {
+			continue;
+		}
+		
+		// This column should be a STRUCT - build StructColumnInfo
+		StructColumnInfo struct_info;
+		struct_info.name = col.name;
+		struct_info.nullable = col.nullable;
+		
+		// Initialize child fields
+		for (const std::string &child_key : all_child_keys) {
+			StructChildField child;
+			child.name = child_key;
+			child.nullable = true;  // Assume nullable until proven otherwise
+			struct_info.children.push_back(child);
+		}
+		
+		// Build presence info for each child field
+		for (size_t fi = 0; fi < num_features; fi++) {
+			const mvt_value *v = get_feature_property(layer, layer.features[fi], col.name);
+			if (v == NULL || v->type != mvt_string) {
+				continue;
+			}
+			
+			std::string str_val = v->get_string_value();
+			if (str_val.empty() || !is_json_object_string(str_val)) {
+				continue;
+			}
+			
+			auto parsed = parse_json_object(str_val);
+			for (size_t ci = 0; ci < struct_info.children.size(); ci++) {
+				if (parsed.count(struct_info.children[ci].name) > 0) {
+					struct_info.children[ci].present.push_back(fi);
+				}
+			}
+		}
+		
+		// Check which children are non-nullable (present in all features that have the parent)
+		for (auto &child : struct_info.children) {
+			child.nullable = child.present.size() < col.present.size();
+		}
+		
+		struct_columns.push_back(struct_info);
+		columns_to_remove.push_back(col_idx);
+	}
+	
+	// Remove struct columns from scalar_columns (in reverse order to preserve indices)
+	for (auto it = columns_to_remove.rbegin(); it != columns_to_remove.rend(); ++it) {
+		scalar_columns.erase(scalar_columns.begin() + *it);
+	}
+	
+	return struct_columns;
+}
+
 // Encode embedded metadata for a layer
 std::string mlt_tile::encode_metadata(const mvt_layer &layer,
 				       bool has_ids,
 				       bool nullable_ids,
 				       bool use_64bit_ids,
-				       const std::vector<PropertyColumnInfo> &property_columns) {
+				       const std::vector<PropertyColumnInfo> &property_columns,
+				       const std::vector<StructColumnInfo> &struct_columns) {
 	std::string out;
 	
 	// Layer name
@@ -545,10 +717,11 @@ std::string mlt_tile::encode_metadata(const mvt_layer &layer,
 	// Extent
 	encode_varint(out, layer.extent);
 	
-	// Column count: id (optional) + geometry + properties
+	// Column count: id (optional) + geometry + properties + structs
 	size_t column_count = 1;  // geometry is always present
 	if (has_ids) column_count++;
 	column_count += property_columns.size();
+	column_count += struct_columns.size();
 	encode_varint(out, column_count);
 	
 	// ID column (if present)
@@ -596,6 +769,22 @@ std::string mlt_tile::encode_metadata(const mvt_layer &layer,
 		}
 		encode_varint(out, type_code);
 		encode_string_with_length(out, col.name);
+	}
+	
+	// STRUCT columns
+	for (const auto &struct_col : struct_columns) {
+		encode_varint(out, COL_STRUCT);
+		encode_string_with_length(out, struct_col.name);
+		
+		// Number of child fields
+		encode_varint(out, struct_col.children.size());
+		
+		// Child field metadata (all strings for now, as per spec limitation)
+		for (const auto &child : struct_col.children) {
+			int child_type_code = child.nullable ? COL_STRING_NULLABLE : COL_STRING;
+			encode_varint(out, child_type_code);
+			encode_string_with_length(out, child.name);
+		}
 	}
 	
 	return out;
@@ -1003,6 +1192,142 @@ std::string mlt_tile::encode_property_column(const mvt_layer &layer,
 	return result;
 }
 
+// Encode a STRUCT column with shared dictionary encoding
+// Layout: NumStreams, Length, Dictionary, [Present1, Data1], [Present2, Data2], ...
+std::string mlt_tile::encode_struct_column(const mvt_layer &layer,
+					   const StructColumnInfo &struct_info) {
+	std::string result;
+	size_t num_features = layer.features.size();
+	
+	// Collect all string values for the shared dictionary
+	std::unordered_map<std::string, uint32_t> dict_map;
+	std::vector<std::string> dict_values;
+	
+	// For each child field, collect the dictionary indices and present info
+	struct ChildData {
+		std::vector<bool> present;
+		std::vector<uint32_t> indices;  // Dictionary indices for present values
+	};
+	std::vector<ChildData> child_data(struct_info.children.size());
+	
+	// Initialize present vectors
+	for (size_t ci = 0; ci < struct_info.children.size(); ci++) {
+		child_data[ci].present.resize(num_features, false);
+	}
+	
+	// Process each feature
+	for (size_t fi = 0; fi < num_features; fi++) {
+		const mvt_value *v = get_feature_property(layer, layer.features[fi], struct_info.name);
+		if (v == NULL || v->type != mvt_string) {
+			continue;
+		}
+		
+		std::string str_val = v->get_string_value();
+		if (str_val.empty() || !is_json_object_string(str_val)) {
+			continue;
+		}
+		
+		auto parsed = parse_json_object(str_val);
+		
+		for (size_t ci = 0; ci < struct_info.children.size(); ci++) {
+			const std::string &child_name = struct_info.children[ci].name;
+			auto it = parsed.find(child_name);
+			
+			if (it != parsed.end()) {
+				child_data[ci].present[fi] = true;
+				
+				// Add to dictionary if not present
+				const std::string &val = it->second;
+				auto dict_it = dict_map.find(val);
+				uint32_t idx;
+				if (dict_it == dict_map.end()) {
+					idx = dict_values.size();
+					dict_map[val] = idx;
+					dict_values.push_back(val);
+				} else {
+					idx = dict_it->second;
+				}
+				child_data[ci].indices.push_back(idx);
+			}
+		}
+	}
+	
+	// Calculate number of streams:
+	// 2 for shared dictionary (Length + Data) + 2 per child field (Present + Data)
+	int num_streams = 2 + (2 * struct_info.children.size());
+	encode_varint(result, num_streams);
+	
+	// Encode shared dictionary Length stream
+	{
+		std::string length_data;
+		for (const auto &s : dict_values) {
+			encode_varint(length_data, s.size());
+		}
+		
+		StreamMetadata meta;
+		meta.physical_type = STREAM_LENGTH;
+		meta.logical_subtype = LENGTH_DICTIONARY;
+		meta.llt1 = LLT_NONE;
+		meta.llt2 = LLT_NONE;
+		meta.plt = PLT_VARINT;
+		meta.num_values = dict_values.size();
+		meta.byte_length = length_data.size();
+		
+		result.append(encode_stream_metadata(meta));
+		result.append(length_data);
+	}
+	
+	// Encode shared dictionary Data stream
+	{
+		std::string dict_data;
+		for (const auto &s : dict_values) {
+			dict_data.append(s);
+		}
+		
+		StreamMetadata meta;
+		meta.physical_type = STREAM_DATA;
+		meta.logical_subtype = DICT_SHARED;
+		meta.llt1 = LLT_NONE;
+		meta.llt2 = LLT_NONE;
+		meta.plt = PLT_NONE;
+		meta.num_values = 0;
+		meta.byte_length = dict_data.size();
+		
+		result.append(encode_stream_metadata(meta));
+		result.append(dict_data);
+	}
+	
+	// Encode each child field's Present and Data streams
+	for (size_t ci = 0; ci < struct_info.children.size(); ci++) {
+		const ChildData &cd = child_data[ci];
+		
+		// Present stream
+		result.append(encode_present_stream(cd.present));
+		
+		// Data stream (dictionary indices)
+		{
+			std::string idx_data;
+			for (uint32_t idx : cd.indices) {
+				encode_varint(idx_data, idx);
+			}
+			
+			StreamMetadata meta;
+			meta.physical_type = STREAM_DATA;
+			meta.logical_subtype = DICT_SHARED;
+			meta.llt1 = LLT_NONE;
+			meta.llt2 = LLT_NONE;
+			meta.plt = PLT_VARINT;
+			meta.num_values = cd.indices.size();
+			meta.byte_length = idx_data.size();
+			
+			result.append(encode_stream_metadata(meta));
+			result.append(idx_data);
+		}
+	}
+	
+	return result;
+}
+
 // Encode a single layer as a feature table
 std::string mlt_tile::encode_layer(const mvt_layer &layer) {
 	if (layer.features.empty()) {
@@ -1035,14 +1360,17 @@ std::string mlt_tile::encode_layer(const mvt_layer &layer) {
 		}
 	}
 	
-	// Analyze properties
+	// Analyze properties - first get all, then separate struct columns
 	auto property_columns = analyze_properties(layer);
+	
+	// Analyze and extract STRUCT columns from JSON object strings
+	std::vector<StructColumnInfo> struct_columns = analyze_struct_properties(layer, property_columns);
 	
 	// Encode layer content
 	std::string content;
 	
 	// Embedded metadata
-	content.append(encode_metadata(layer, has_ids, nullable_ids, use_64bit_ids, property_columns));
+	content.append(encode_metadata(layer, has_ids, nullable_ids, use_64bit_ids, property_columns, struct_columns));
 	
 	// ID column (if any features have IDs)
 	if (has_ids) {
@@ -1052,9 +1380,14 @@ std::string mlt_tile::encode_layer(const mvt_layer &layer) {
 	// Geometry column
 	content.append(encode_geometry_column(layer));
 	
-	// Property columns
+	// Property columns (scalar only, struct columns removed by analyze_struct_properties)
 	for (const auto &col_info : property_columns) {
 		content.append(encode_property_column(layer, col_info));
+	}
+	
+	// STRUCT columns with shared dictionary encoding
+	for (const auto &struct_info : struct_columns) {
+		content.append(encode_struct_column(layer, struct_info));
 	}
 	
 	// Wrap in block with length prefix and tag

@@ -136,6 +136,20 @@ struct PropertyColumnInfo {
 	std::vector<size_t> present;  // indices of features that have this property
 };
 
+// Child field info for STRUCT columns
+struct StructChildField {
+	std::string name;       // child field name (e.g., "en" from {"name": {"en": "..."}})
+	bool nullable;
+	std::vector<size_t> present;  // indices of features that have this child field
+};
+
+// STRUCT column info for nested JSON object properties
+struct StructColumnInfo {
+	std::string name;       // property name containing the nested object
+	std::vector<StructChildField> children;  // child fields from the nested object
+	bool nullable;          // is the entire struct nullable
+};
+
 // Forward declarations
 class mlt_tile;
 
@@ -160,7 +174,8 @@ private:
 				    bool has_ids,
 				    bool nullable_ids,
 				    bool use_64bit_ids,
-				    const std::vector<PropertyColumnInfo> &property_columns);
+				    const std::vector<PropertyColumnInfo> &property_columns,
+				    const std::vector<StructColumnInfo> &struct_columns);
 
 	// Encode ID column
 	std::string encode_id_column(const mvt_layer &layer, bool nullable, bool use_64bit);
@@ -190,10 +205,24 @@ private:
 	// Helper: analyze properties across all features
 	std::vector<PropertyColumnInfo> analyze_properties(const mvt_layer &layer);
 
+	// Helper: analyze and extract STRUCT columns from JSON object strings
+	std::vector<StructColumnInfo> analyze_struct_properties(const mvt_layer &layer,
+								std::vector<PropertyColumnInfo> &scalar_columns);
+
+	// Encode a STRUCT column with shared dictionary encoding
+	std::string encode_struct_column(const mvt_layer &layer,
+					 const StructColumnInfo &struct_info);
+
 	// Helper: get MVT value for a feature's property
 	const mvt_value *get_feature_property(const mvt_layer &layer,
 					      const mvt_feature &feature,
 					      const std::string &key);
+
+	// Helper: check if a string looks like a JSON object
+	static bool is_json_object_string(const std::string &s);
+
+	// Helper: parse JSON object string and extract child field values
+	static std::map<std::string, std::string> parse_json_object(const std::string &json_str);
 };
 
 }  // namespace mlt
