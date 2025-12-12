@@ -552,6 +552,8 @@ the same layer, enclose them in an `all` expression so they will all be evaluate
  * `-pf` or `--no-feature-limit`: Don't limit tiles to 200,000 features
  * `-pk` or `--no-tile-size-limit`: Don't limit tiles to 500K bytes
  * `-pC` or `--no-tile-compression`: Don't compress the PBF vector tile data. If you are getting "Unimplemented type 3" error messages from a renderer, it is probably because it expects uncompressed tiles using this option rather than the normal gzip-compressed tiles.
+ * `--output-format=`_format_: Specify the tile format: `mvt` (or `pbf`) for Mapbox Vector Tiles (default), or `mlt` for MapLibre Tiles.
+ * `--tile-extension=`_extension_: Specify the file extension for tiles when using directory output (`-e`). The default is `.pbf` for MVT format or `.mlt` when using `--output-format=mlt`. The leading dot is optional (both `pbf` and `.pbf` work).
  * `-pg` or `--no-tile-stats`: Don't generate the `tilestats` row in the tileset metadata. Uploads without [tilestats](https://github.com/mapbox/mapbox-geostats) will take longer to process.
  * `--tile-stats-attributes-limit=`*count*: Include `tilestats` information about at most *count* attributes instead of the default 1000.
  * `--tile-stats-sample-values-limit=`*count*: Calculate `tilestats` attribute statistics based on *count* values instead of the default 1000.

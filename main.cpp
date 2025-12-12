@@ -103,6 +103,7 @@ std::vector<order_field> order_by;
 bool order_reverse;
 bool order_by_size = false;
 int output_format = OUTPUT_MVT;
+std::string tile_extension;
 
 int prevent[256];
 int additional[256];
@@ -3158,6 +3159,7 @@ int main(int argc, char **argv) {
 		{"no-tile-size-limit", no_argument, &prevent[P_KILOBYTE_LIMIT], 1},
 		{"no-tile-compression", no_argument, &prevent[P_TILE_COMPRESSION], 1},
 		{"output-format", required_argument, 0, '~'},
+		{"tile-extension", required_argument, 0, '~'},
 		{"no-tile-stats", no_argument, &prevent[P_TILE_STATS], 1},
 		{"tile-stats-attributes-limit", required_argument, 0, '~'},
 		{"tile-stats-sample-values-limit", required_argument, 0, '~'},
@@ -3317,6 +3319,11 @@ int main(int argc, char **argv) {
 				} else {
 					fprintf(stderr, "%s: --output-format must be 'mvt' or 'mlt'\n", argv[0]);
 					exit(EXIT_ARGS);
+				}
+			} else if (strcmp(opt, "tile-extension") == 0) {
+				tile_extension = optarg;
+				if (tile_extension.size() > 0 && tile_extension[0] != '.') {
+					tile_extension = "." + tile_extension;
 				}
 			} else {
 				fprintf(stderr, "%s: Unrecognized option --%s\n", argv[0], opt);
@@ -3783,6 +3790,15 @@ int main(int argc, char **argv) {
 		// if rate and base aren't known during feature reading.
 		gamma = 0;
 		fprintf(stderr, "Forcing -g0 since -B or -r is not known\n");
+	}
+
+	// Auto-set tile extension based on output format if not explicitly specified
+	if (tile_extension.empty()) {
+		if (output_format == OUTPUT_MLT) {
+			tile_extension = ".mlt";
+		} else {
+			tile_extension = ".pbf";
+		}
 	}
 
 	if (out_mbtiles == NULL && out_dir == NULL) {

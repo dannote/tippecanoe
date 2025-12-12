@@ -953,7 +953,7 @@ void dispatch_tasks(std::map<zxy, std::vector<std::string>> &tasks, std::vector<
 			if (outdb != NULL) {
 				mbtiles_write_tile(outdb, ai->first.z, ai->first.x, ai->first.y, ai->second.data(), ai->second.size());
 			} else if (outdir != NULL) {
-				dir_write_tile(outdir, ai->first.z, ai->first.x, ai->first.y, ai->second);
+				dir_write_tile(outdir, ai->first.z, ai->first.x, ai->first.y, ai->second, ".pbf");
 			}
 		}
 	}
