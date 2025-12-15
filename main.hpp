@@ -66,10 +66,11 @@ struct order_field {
 
 extern std::vector<order_field> order_by;
 
-// Output format: 0 = MVT (default), 1 = MLT
+// Output format: 0 = MVT (default), 1 = MLT, 2 = GeoJSON
 extern int output_format;
 #define OUTPUT_MVT 0
 #define OUTPUT_MLT 1
+#define OUTPUT_GEOJSON_BR 2
 
 // Tile extension for directory output (default: ".pbf")
 extern std::string tile_extension;

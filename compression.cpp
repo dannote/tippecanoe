@@ -6,6 +6,26 @@
 #include "errors.hpp"
 #include "protozero/varint.hpp"
 #include "serial.hpp"
+#include <brotli/encode.h>
+
+int compress_brotli(std::string const &input, std::string &output) {
+	size_t output_size = BrotliEncoderMaxCompressedSize(input.size());
+	output.resize(output_size);
+
+	if (BrotliEncoderCompress(
+		    BROTLI_DEFAULT_QUALITY,
+		    BROTLI_DEFAULT_WINDOW,
+		    BROTLI_DEFAULT_MODE,
+		    input.size(),
+		    (const uint8_t *) input.data(),
+		    &output_size,
+		    (uint8_t *) output.data()) == BROTLI_FALSE) {
+		return -1;
+	}
+
+	output.resize(output_size);
+	return 0;
+}
 
 void decompressor::begin() {
 	within = true;

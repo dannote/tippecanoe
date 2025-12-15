@@ -3317,8 +3317,10 @@ int main(int argc, char **argv) {
 					output_format = OUTPUT_MVT;
 				} else if (strcmp(optarg, "mlt") == 0) {
 					output_format = OUTPUT_MLT;
+				} else if (strcmp(optarg, "geojson-br") == 0) {
+					output_format = OUTPUT_GEOJSON_BR;
 				} else {
-					fprintf(stderr, "%s: --output-format must be 'mvt' or 'mlt'\n", argv[0]);
+					fprintf(stderr, "%s: --output-format must be 'mvt', 'mlt', or 'geojson-br'\n", argv[0]);
 					exit(EXIT_ARGS);
 				}
 			} else if (strcmp(opt, "tile-extension") == 0) {
@@ -3797,6 +3799,8 @@ int main(int argc, char **argv) {
 	if (tile_extension.empty()) {
 		if (output_format == OUTPUT_MLT) {
 			tile_extension = ".mlt";
+		} else if (output_format == OUTPUT_GEOJSON_BR) {
+			tile_extension = ".json.br";
 		} else {
 			tile_extension = ".pbf";
 		}

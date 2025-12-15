@@ -1,3 +1,6 @@
+#ifndef COMPRESSION_HPP
+#define COMPRESSION_HPP
+
 #ifdef __APPLE__
 #define _DARWIN_UNLIMITED_STREAMS
 #endif
@@ -6,6 +9,8 @@
 #include <string>
 #include <atomic>
 #include <zlib.h>
+
+int compress_brotli(std::string const &input, std::string &output);
 
 struct decompressor {
 	FILE *fp = NULL;
@@ -56,3 +61,5 @@ struct compressor {
 	void serialize_int(int val, std::atomic<long long> *fpos, const char *fname);
 	void serialize_uint(unsigned val, std::atomic<long long> *fpos, const char *fname);
 };
+
+#endif

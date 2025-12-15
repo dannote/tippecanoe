@@ -81,7 +81,7 @@ static bool pbfname(const char *s) {
 		s++;
 	}
 
-	return strcmp(s, ".pbf") == 0 || strcmp(s, ".mvt") == 0 || strcmp(s, ".mlt") == 0;
+	return strcmp(s, ".pbf") == 0 || strcmp(s, ".mvt") == 0 || strcmp(s, ".mlt") == 0 || strcmp(s, ".json.br") == 0;
 }
 
 void check_dir(const char *dir, char **argv, bool force, bool forcetable) {

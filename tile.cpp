@@ -2733,13 +2733,28 @@ long long write_tile(decompressor *geoms, std::atomic<long long> *geompos_in, ch
 			if (output_format == OUTPUT_MLT) {
 				mlt::mlt_tile mlt_encoder;
 				pbf = mlt_encoder.encode(tile);
+			} else if (output_format == OUTPUT_GEOJSON_BR) {
+				std::set<std::string> include_attrs;  // empty = include all
+				for (size_t i = 0; i < tile.layers.size(); i++) {
+					std::string layer_json;
+					json_writer jw(&layer_json);
+					// scale=0 means use lon/lat coordinates
+					layer_to_geojson(tile.layers[i], z, tx, ty, i > 0, false, false, false, 0, 0, 0, false, jw, 0, include_attrs);
+					pbf += layer_json;
+				}
 			} else {
 				pbf = tile.encode();
 			}
 
 			tile.layers.clear();
 
-			if (!prevent[P_TILE_COMPRESSION]) {
+			if (output_format == OUTPUT_GEOJSON_BR) {
+				if (!prevent[P_TILE_COMPRESSION]) {
+					compress_brotli(pbf, compressed);
+				} else {
+					compressed = pbf;
+				}
+			} else if (!prevent[P_TILE_COMPRESSION]) {
 				compress(pbf, compressed, true);
 			} else {
 				compressed = pbf;
